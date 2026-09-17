@@ -35,3 +35,17 @@ CSV 必须包含 `user_id,item_id,timestamp` 三列。Amazon Beauty 来自 [UCSD
 - item-level Recall/NDCG、collision/index diagnostics、JSON outputs 和资源记录
 
 配置既可在命令行覆盖，也可放在 `configs/`。新增 baseline 只需实现 `BaseGRModel.training_step()` 与 `recommend()`，无需修改 trainer、dataset 或 evaluator。
+
+## TIGER pipeline
+
+TIGER is implemented in two frozen stages: an RQ-VAE produces Semantic IDs, then a Transformer encoder-decoder autoregressively generates the next ID under trie-constrained beam search. Generated IDs are always mapped back to ranked item IDs before Recall/NDCG evaluation.
+
+```bash
+python scripts/build_representation.py --dataset amazon_beauty --representation hashed --dim 32
+python scripts/build_item_index.py --dataset amazon_beauty --representation hashed \
+  --item-index rqvae --code-length 3 --codebook-size 256 --epochs 30 --device cuda
+python run.py --dataset amazon_beauty --representation hashed --item-index rqvae \
+  --epochs 30 --batch-size 256 --hidden-dim 128 --heads 4 --layers 2 --max-history 50
+```
+
+`hashed` is a fast infrastructure smoke-test representation, so it must be reported as `protocol=controlled`; a faithful paper reproduction additionally needs a frozen item-content encoder (such as Sentence-T5) and paper-matched hyperparameters.
