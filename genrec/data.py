@@ -52,6 +52,10 @@ AMAZON_CATEGORY_URLS = {
     },
 }
 
+AMAZON_METADATA_URLS = {
+    "beauty": "https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/meta_Beauty.json.gz",
+}
+
 
 def download_amazon_category(category: str, destination: Path, source="5core") -> Path:
     """Download an official Amazon review file without silently overwriting it."""
@@ -71,6 +75,37 @@ def download_amazon_category(category: str, destination: Path, source="5core") -
         temporary.unlink(missing_ok=True)
         raise
     return destination
+
+
+def download_amazon_metadata(category: str, destination: Path) -> Path:
+    category = category.lower()
+    if category not in AMAZON_METADATA_URLS:
+        raise ValueError(f"Unsupported Amazon metadata category {category!r}; available: {sorted(AMAZON_METADATA_URLS)}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists(): return destination
+    temporary = destination.with_suffix(destination.suffix + ".part")
+    try:
+        urllib.request.urlretrieve(AMAZON_METADATA_URLS[category], temporary)
+        temporary.replace(destination)
+    except Exception:
+        temporary.unlink(missing_ok=True); raise
+    return destination
+
+
+def load_amazon_item_texts(path: str, item_mapping: dict) -> list:
+    """Extract title/category text for active items only from official metadata."""
+    texts = [""] * (len(item_mapping) + 1)
+    with gzip.open(path, "rt", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, 1):
+            try: metadata = ast.literal_eval(line)
+            except (SyntaxError, ValueError) as error: raise ValueError(f"Invalid metadata at line {line_number}: {error}") from error
+            item = metadata.get("asin")
+            if item not in item_mapping: continue
+            title = str(metadata.get("title") or "")
+            categories = metadata.get("categories") or []
+            category_text = " ".join(" ".join(map(str, path)) for path in categories)
+            texts[item_mapping[item]] = (title + " " + category_text).strip() or str(item)
+    return texts
 
 
 def load_amazon_reviews(path: str, name="amazon_beauty", min_user_interactions=5, min_item_interactions=5) -> DatasetBundle:
