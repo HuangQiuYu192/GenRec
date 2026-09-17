@@ -16,6 +16,8 @@ class Trainer:
         self.epochs, self.batch_size, self.lr, self.device = epochs, batch_size, lr, torch.device(device)
     def fit(self, model, dataset):
         model.to(self.device); optimizer = torch.optim.AdamW(model.parameters(), lr=self.lr); started = time.perf_counter()
+        if self.device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(self.device)
         history = []
         examples = [(sequence[:-1], sequence[-1]) for sequence in dataset.train_sequences if len(sequence) > 1]
         for _ in range(self.epochs):
@@ -23,10 +25,14 @@ class Trainer:
             for batch in make_batches(examples, self.batch_size, self.device):
                 result = model.training_step(batch); optimizer.zero_grad(); result["loss"].backward(); optimizer.step(); losses.append(result["loss"].item())
             history.append(sum(losses) / max(len(losses), 1))
-        return {"train_seconds": time.perf_counter() - started, "train_loss": history[-1] if history else None}
+        resource = {"train_seconds": time.perf_counter() - started, "train_loss": history[-1] if history else None,
+                    "parameter_count": sum(parameter.numel() for parameter in model.parameters())}
+        if self.device.type == "cuda":
+            resource["peak_gpu_memory_mb"] = torch.cuda.max_memory_allocated(self.device) / 1024 ** 2
+            resource["gpu_name"] = torch.cuda.get_device_name(self.device)
+        return resource
     @torch.no_grad()
     def evaluate(self, model, examples):
         model.eval(); predictions, targets = [], []
         for batch in make_batches(examples, self.batch_size, self.device): predictions.append(model.recommend(batch, 20).cpu()); targets.append(batch["target"].cpu())
         return ranking_metrics(torch.cat(predictions), torch.cat(targets))
-
