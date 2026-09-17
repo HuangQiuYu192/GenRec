@@ -130,4 +130,5 @@ def save_dataset(bundle: DatasetBundle, root: Path) -> Path:
 
 
 def load_dataset(root: Path) -> DatasetBundle:
-    return torch.load(root / "dataset.pt", map_location="cpu")
+    # DatasetBundle is a trusted local cache produced by this benchmark.
+    return torch.load(root / "dataset.pt", map_location="cpu", weights_only=False)

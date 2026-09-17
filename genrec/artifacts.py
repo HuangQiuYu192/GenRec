@@ -29,7 +29,7 @@ class RepresentationArtifact:
 
     @classmethod
     def load(cls, path: Path, split_hash: str):
-        result = torch.load(path, map_location="cpu"); _verify(result.metadata, split_hash); return result
+        result = torch.load(path, map_location="cpu", weights_only=False); _verify(result.metadata, split_hash); return result
 
 
 @dataclass
@@ -75,5 +75,4 @@ class ItemIndexArtifact:
 
     @classmethod
     def load(cls, path: Path, split_hash: str):
-        result = torch.load(path, map_location="cpu"); _verify(result.metadata, split_hash); result.__post_init__(); return result
-
+        result = torch.load(path, map_location="cpu", weights_only=False); _verify(result.metadata, split_hash); result.__post_init__(); return result
