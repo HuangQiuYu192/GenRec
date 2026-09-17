@@ -35,12 +35,12 @@ class SentenceT5RepresentationBuilder:
         if len(item_texts) != dataset.num_items:
             raise ValueError(f"Expected {dataset.num_items} item texts, got {len(item_texts)}.")
         try:
-            from transformers import AutoModel, AutoTokenizer
+            from transformers import AutoTokenizer, T5EncoderModel
         except ImportError as error:
             raise ImportError("Sentence-T5 needs transformers and sentencepiece. Run: pip install -r requirements.txt") from error
         device = torch.device(self.device or ("cuda" if torch.cuda.is_available() else "cpu"))
         tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        encoder = AutoModel.from_pretrained(self.model_name).to(device).eval()
+        encoder = T5EncoderModel.from_pretrained(self.model_name).to(device).eval()
         encoded = [torch.zeros(encoder.config.d_model if hasattr(encoder.config, "d_model") else encoder.config.hidden_size)]
         with torch.no_grad():
             for start in range(1, len(item_texts), self.batch_size):
