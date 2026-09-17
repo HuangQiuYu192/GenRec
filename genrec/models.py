@@ -75,22 +75,25 @@ class TigerModel(BaseGRModel):
 
     @torch.no_grad()
     def recommend(self, batch, k, decoder=None):
-        source, trie, all_predictions = self._history_tokens(batch["history"]), self._trie(), []
-        beam_width = max(k, 20)
-        for row in range(source.shape[0]):
-            beams = [([TigerSerializer.BOS], 0.0, trie)]
-            for _ in range(self.item_index.code_length):
-                candidates = []
-                prefixes = torch.tensor([prefix for prefix, _, _ in beams], device=source.device)
-                logits_batch = self._decode_logits(source[row:row + 1].expand(len(beams), -1), prefixes)[:, -1]
-                for (prefix, score, node), logits in zip(beams, logits_batch):
-                    valid = list(node); values = torch.log_softmax(logits[valid], 0)
-                    candidates.extend((prefix + [token], score + value, node[token]) for token, value in zip(valid, values.tolist()))
-                beams = sorted(candidates, key=lambda entry: entry[1], reverse=True)[:beam_width]
+        source, trie, beam_width = self._history_tokens(batch["history"]), self._trie(), max(k, 20)
+        beams = [[([TigerSerializer.BOS], 0.0, trie)] for _ in range(source.shape[0])]
+        for _ in range(self.item_index.code_length):
+            owners, flat = [], []
+            for row, row_beams in enumerate(beams):
+                owners.extend([row] * len(row_beams)); flat.extend(row_beams)
+            prefixes = torch.tensor([prefix for prefix, _, _ in flat], device=source.device)
+            logits_batch = self._decode_logits(source[torch.tensor(owners, device=source.device)], prefixes)[:, -1]
+            next_beams = [[] for _ in beams]
+            for row, (prefix, score, node), logits in zip(owners, flat, logits_batch):
+                valid = list(node); values = torch.log_softmax(logits[valid], 0)
+                next_beams[row].extend((prefix + [token], score + value, node[token]) for token, value in zip(valid, values.tolist()))
+            beams = [sorted(row_beams, key=lambda entry: entry[1], reverse=True)[:beam_width] for row_beams in next_beams]
+        predictions = []
+        for row_beams in beams:
             ranked = []
-            for prefix, _, _ in beams:
+            for prefix, _, _ in row_beams:
                 code = [self.serializer.local_code(token, level) for level, token in enumerate(prefix[1:])]
                 ranked.extend(self.item_index.get_items(code))
                 if len(ranked) >= k: break
-            all_predictions.append((ranked + [0] * k)[:k])
-        return torch.tensor(all_predictions, device=source.device)
+            predictions.append((ranked + [0] * k)[:k])
+        return torch.tensor(predictions, device=source.device)
