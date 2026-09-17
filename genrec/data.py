@@ -45,22 +45,27 @@ def load_csv(path: str, name: str) -> DatasetBundle:
 
 
 AMAZON_CATEGORY_URLS = {
-    # Official UCSD Amazon page links to this per-category review file.
-    "beauty": "https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/reviews_Beauty.json.gz",
+    # Official UCSD Amazon page links to both complete and precomputed k-core files.
+    "beauty": {
+        "full": "https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/reviews_Beauty.json.gz",
+        "5core": "https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/reviews_Beauty_5.json.gz",
+    },
 }
 
 
-def download_amazon_category(category: str, destination: Path) -> Path:
+def download_amazon_category(category: str, destination: Path, source="5core") -> Path:
     """Download an official Amazon review file without silently overwriting it."""
     category = category.lower()
     if category not in AMAZON_CATEGORY_URLS:
         raise ValueError(f"Unsupported Amazon category {category!r}; available: {sorted(AMAZON_CATEGORY_URLS)}")
+    if source not in AMAZON_CATEGORY_URLS[category]:
+        raise ValueError(f"Unsupported source {source!r}; available: {sorted(AMAZON_CATEGORY_URLS[category])}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists():
         return destination
     temporary = destination.with_suffix(destination.suffix + ".part")
     try:
-        urllib.request.urlretrieve(AMAZON_CATEGORY_URLS[category], temporary)
+        urllib.request.urlretrieve(AMAZON_CATEGORY_URLS[category][source], temporary)
         temporary.replace(destination)
     except Exception:
         temporary.unlink(missing_ok=True)
