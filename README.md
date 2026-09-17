@@ -10,14 +10,17 @@ pip install -r requirements.txt
 # 无需下载数据的端到端 smoke run
 python run.py --debug --epochs 2
 
-# 将 CSV（user_id,item_id,timestamp）处理为 benchmark cache
+# 从 UCSD 官方 Amazon 链接下载 Beauty 原始 reviews，迭代 5-core 后处理
+python scripts/prepare_dataset.py --amazon beauty --download --dataset amazon_beauty
+
+# 或将自备 CSV（user_id,item_id,timestamp）处理为 benchmark cache
 python scripts/prepare_dataset.py --input data/interactions.csv --dataset amazon_beauty
 python scripts/build_representation.py --dataset amazon_beauty --representation hashed
 python scripts/build_item_index.py --dataset amazon_beauty --representation hashed --item-index rqkmeans
 python run.py --dataset amazon_beauty --representation hashed --item-index rqkmeans
 ```
 
-CSV 必须包含 `user_id,item_id,timestamp` 三列。按用户时间排序后，最后两个交互依次作为 validation/test，其余为 train；所有可训练 artifact 只拟合 train。
+CSV 必须包含 `user_id,item_id,timestamp` 三列。Amazon Beauty 来自 [UCSD Amazon product data](https://cseweb.ucsd.edu/~jmcauley/datasets/amazon/links.html) 所列的官方 per-category review file。原始 review 先经过迭代 5-core 过滤（用户与物品的交互数均至少为 5），再按用户时间排序；最后两个交互依次作为 validation/test，其余为 train。所有可训练 artifact 只拟合 train。
 
 ## Included V1
 
@@ -29,4 +32,3 @@ CSV 必须包含 `user_id,item_id,timestamp` 三列。按用户时间排序后�
 - item-level Recall/NDCG、collision/index diagnostics、JSON outputs 和资源记录
 
 配置既可在命令行覆盖，也可放在 `configs/`。新增 baseline 只需实现 `BaseGRModel.training_step()` 与 `recommend()`，无需修改 trainer、dataset 或 evaluator。
-
