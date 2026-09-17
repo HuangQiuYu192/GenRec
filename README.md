@@ -1,0 +1,32 @@
+# GenRec
+
+一个面向生成式推荐研究的轻量、可复现 benchmark。它统一数据划分、artifact 缓存、评测、训练和资源记录，同时将模型内部算法保留在各个 baseline 中。
+
+## Quick start
+
+```bash
+pip install -r requirements.txt
+
+# 无需下载数据的端到端 smoke run
+python run.py --debug --epochs 2
+
+# 将 CSV（user_id,item_id,timestamp）处理为 benchmark cache
+python scripts/prepare_dataset.py --input data/interactions.csv --dataset amazon_beauty
+python scripts/build_representation.py --dataset amazon_beauty --representation hashed
+python scripts/build_item_index.py --dataset amazon_beauty --representation hashed --item-index rqkmeans
+python run.py --dataset amazon_beauty --representation hashed --item-index rqkmeans
+```
+
+CSV 必须包含 `user_id,item_id,timestamp` 三列。按用户时间排序后，最后两个交互依次作为 validation/test，其余为 train；所有可训练 artifact 只拟合 train。
+
+## Included V1
+
+- 可复现的 sequential split 和 split hash
+- `RepresentationArtifact` 与 `ItemIndexArtifact` 的带 metadata 缓存和 split-mismatch 防护
+- hashed content-style representation、train-only collaborative representation
+- RQ-KMeans 与轻量 RQ-VAE item index
+- TIGER-style SID prediction baseline、candidate-constrained decoder
+- item-level Recall/NDCG、collision/index diagnostics、JSON outputs 和资源记录
+
+配置既可在命令行覆盖，也可放在 `configs/`。新增 baseline 只需实现 `BaseGRModel.training_step()` 与 `recommend()`，无需修改 trainer、dataset 或 evaluator。
+
