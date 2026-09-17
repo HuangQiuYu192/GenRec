@@ -21,9 +21,10 @@ else:
     representation = HashedRepresentationBuilder(seed=a.seed).build(dataset)
     index = (RQVAEBuilder(epochs=3, codebook_size=16, hidden_dim=32, seed=a.seed) if a.item_index == "rqvae" else RQKMeansBuilder(codebook_size=16, seed=a.seed)).build(dataset, representation)
 device = "cuda" if torch.cuda.is_available() else "cpu"
-trainer = Trainer(epochs=a.epochs, batch_size=a.batch_size, lr=a.lr, device=device, max_history=a.max_history)
+path = Path("outputs") / f"tiger_{dataset.name}_seed{a.seed}.json"
+trainer = Trainer(epochs=a.epochs, batch_size=a.batch_size, lr=a.lr, device=device, max_history=a.max_history, log_path=path.with_suffix(".jsonl"))
 model = TigerModel(dataset.num_items, index, a.hidden_dim, a.heads, a.layers, max_history=a.max_history)
 resource = trainer.fit(model, dataset); valid = trainer.evaluate(model, dataset.valid_examples); test = trainer.evaluate(model, dataset.test_examples)
 output = {"dataset":dataset.name,"protocol":a.protocol,"device":device,"valid_metrics":valid,"test_metrics":test,"index":index.diagnostics(),"resource":resource}
-path = Path("outputs") / f"tiger_{dataset.name}_seed{a.seed}.json"; write_json(path, output); torch.save({"model":model.state_dict(),"output":output}, path.with_suffix(".pt"))
+write_json(path, output); torch.save({"model":model.state_dict(),"output":output}, path.with_suffix(".pt"))
 print(output); print(f"Saved {path}")
