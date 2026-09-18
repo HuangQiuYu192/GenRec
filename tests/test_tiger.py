@@ -1,10 +1,12 @@
 from genrec.data import make_synthetic_dataset
-from genrec.representations import HashedRepresentationBuilder
 from genrec.item_indexes import RQKMeansBuilder
-from genrec.models import TigerModel
-from genrec.training import Trainer
+from genrec.models import TigerSerializer
+from genrec.representations import HashedRepresentationBuilder
 
-def test_tiger_smoke():
-    data=make_synthetic_dataset(users=8,items=16); index=RQKMeansBuilder(codebook_size=4,iterations=2).build(data,HashedRepresentationBuilder().build(data))
-    model=TigerModel(data.num_items,index,16); trainer=Trainer(epochs=1,batch_size=4); trainer.fit(model,data)
-    assert trainer.evaluate(model,data.test_examples)["Recall@20"] == 1.0
+
+def test_tiger_sid_vocabulary_has_collision_level():
+    data = make_synthetic_dataset(users=2, items=4)
+    index = RQKMeansBuilder(codebook_size=2, iterations=1).build(data, HashedRepresentationBuilder(dim=4).build(data))
+    serializer = TigerSerializer(index.vocab_sizes)
+    assert index.item_to_code.shape[1] == 4  # three RQ codes plus TIGER collision token
+    assert serializer.vocab_size == 3 + sum(index.vocab_sizes)

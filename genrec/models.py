@@ -1,4 +1,4 @@
-"""TIGER retrieval model and its benchmark-facing interface."""
+"""TIGER retrieval model backed by a T5 encoder-decoder."""
 import torch
 from torch import nn
 
@@ -10,61 +10,65 @@ class BaseGRModel(nn.Module):
 
 
 class TigerSerializer:
-    """Level-specific SID vocabulary and explicit item-boundary serialization."""
-    PAD, BOS, SEP = 0, 1, 2
+    """Disjoint vocabulary ranges for each SID level and item separators."""
+    PAD, EOS, SEP = 0, 1, 2
+
     def __init__(self, vocab_sizes):
         self.vocab_sizes = list(vocab_sizes); self.offsets = []; cursor = 3
         for size in vocab_sizes: self.offsets.append(cursor); cursor += size
         self.vocab_size = cursor
+
     def code_tokens(self, codes): return codes + torch.tensor(self.offsets, device=codes.device)
     def local_code(self, token, level): return token - self.offsets[level]
 
 
 class TigerModel(BaseGRModel):
-    """Frozen RQ-VAE SIDs + seq2seq Transformer + trie-constrained beam search."""
-    def __init__(self, num_items, item_index, hidden_dim=128, num_heads=4, num_layers=2, dropout=0.1, max_history=50):
-        super().__init__()
-        if item_index is None: raise ValueError("TigerModel requires an external ItemIndexArtifact, but item_index=null.")
-        if hidden_dim % num_heads: raise ValueError("hidden_dim must be divisible by num_heads.")
-        self.item_index, self.max_history = item_index, max_history; self.serializer = TigerSerializer(item_index.vocab_sizes)
-        self.register_buffer("item_to_code", item_index.item_to_code.clone())
-        self.token_embedding = nn.Embedding(self.serializer.vocab_size, hidden_dim, padding_idx=TigerSerializer.PAD)
-        self.position_embedding = nn.Embedding(max_history * (item_index.code_length + 1) + item_index.code_length + 1, hidden_dim)
-        self.transformer = nn.Transformer(d_model=hidden_dim, nhead=num_heads, num_encoder_layers=num_layers, num_decoder_layers=num_layers,
-                                          dim_feedforward=hidden_dim * 4, dropout=dropout, batch_first=True, norm_first=True)
-        self.output = nn.Linear(hidden_dim, self.serializer.vocab_size, bias=False)
+    """TIGER's T5-style seq2seq generator over frozen Semantic IDs.
 
-    def _embed(self, tokens):
-        positions = torch.arange(tokens.shape[1], device=tokens.device)[None]
-        return self.token_embedding(tokens) + self.position_embedding(positions)
+    The model deliberately omits user-ID tokens: this is the requested
+    non-personalized ablation, while every remaining architectural setting is
+    the paper's 4 encoder/4 decoder layers, d_model=128, d_ff=1024, six heads
+    with d_kv=64, ReLU, and dropout 0.1.
+    """
+    def __init__(self, num_items, item_index, hidden_dim=128, num_heads=6, num_layers=4, dropout=.1,
+                 max_history=20, d_ff=1024, d_kv=64, beam_width=20):
+        super().__init__()
+        if item_index is None: raise ValueError("TigerModel requires an ItemIndexArtifact.")
+        try:
+            from transformers import T5Config, T5ForConditionalGeneration
+        except ImportError as error:
+            raise ImportError("TIGER's T5 generator requires transformers. Run: pip install -r requirements.txt") from error
+        self.item_index, self.max_history, self.beam_width = item_index, max_history, beam_width
+        self.serializer = TigerSerializer(item_index.vocab_sizes)
+        self.register_buffer("item_to_code", item_index.item_to_code.clone())
+        config = T5Config(vocab_size=self.serializer.vocab_size, d_model=hidden_dim, d_kv=d_kv, d_ff=d_ff,
+            num_layers=num_layers, num_decoder_layers=num_layers, num_heads=num_heads, dropout_rate=dropout,
+            feed_forward_proj="relu", pad_token_id=TigerSerializer.PAD, eos_token_id=TigerSerializer.EOS,
+            decoder_start_token_id=TigerSerializer.PAD, use_cache=False)
+        self.t5 = T5ForConditionalGeneration(config)
 
     def _history_tokens(self, histories):
         rows = []
         for history in histories.tolist():
             tokens = []
             for item in [item for item in history if item][-self.max_history:]:
-                tokens.extend(self.serializer.code_tokens(self.item_to_code[item]).tolist()); tokens.append(TigerSerializer.SEP)
+                tokens.extend(self.serializer.code_tokens(self.item_to_code[item]).tolist())
+                tokens.append(TigerSerializer.SEP)
             rows.append(tokens or [TigerSerializer.SEP])
         width = max(map(len, rows)); result = histories.new_full((len(rows), width), TigerSerializer.PAD)
         for index, row in enumerate(rows): result[index, :len(row)] = torch.tensor(row, device=histories.device)
         return result
 
-    def _decode_logits(self, source, target):
-        source_padding, target_padding = source.eq(TigerSerializer.PAD), target.eq(TigerSerializer.PAD)
-        length = target.shape[1]; causal = torch.full((length, length), float("-inf"), device=target.device).triu(1)
-        hidden = self.transformer(self._embed(source), self._embed(target), tgt_mask=causal, src_key_padding_mask=source_padding,
-                                  tgt_key_padding_mask=target_padding, memory_key_padding_mask=source_padding)
-        return self.output(hidden)
+    def _decode_logits(self, source, decoder_input):
+        return self.t5(input_ids=source, attention_mask=source.ne(TigerSerializer.PAD),
+            decoder_input_ids=decoder_input).logits
 
     def training_step(self, batch):
-        source, codes = self._history_tokens(batch["history"]), self.item_to_code[batch["target"]]
-        labels = self.serializer.code_tokens(codes)
-        decoder_input = torch.cat((labels.new_full((labels.shape[0], 1), TigerSerializer.BOS), labels[:, :-1]), 1)
-        logits = self._decode_logits(source, decoder_input); losses = []
-        for level, size in enumerate(self.serializer.vocab_sizes):
-            start = self.serializer.offsets[level]; losses.append(nn.functional.cross_entropy(logits[:, level, start:start + size], codes[:, level]))
-        loss = torch.stack(losses).mean()
-        return {"loss": loss, "metrics": {"rec_loss": loss.detach().item()}}
+        source = self._history_tokens(batch["history"])
+        codes = self.item_to_code[batch["target"]]
+        labels = torch.cat((self.serializer.code_tokens(codes), codes.new_full((len(codes), 1), TigerSerializer.EOS)), 1)
+        output = self.t5(input_ids=source, attention_mask=source.ne(TigerSerializer.PAD), labels=labels)
+        return {"loss": output.loss, "metrics": {"rec_loss": output.loss.detach().item()}}
 
     def _trie(self):
         trie = {}
@@ -75,12 +79,12 @@ class TigerModel(BaseGRModel):
 
     @torch.no_grad()
     def recommend(self, batch, k, decoder=None):
-        source, trie, beam_width = self._history_tokens(batch["history"]), self._trie(), max(k, 20)
-        beams = [[([TigerSerializer.BOS], 0.0, trie)] for _ in range(source.shape[0])]
+        source, trie = self._history_tokens(batch["history"]), self._trie()
+        beam_width = max(k, self.beam_width)
+        beams = [[([TigerSerializer.PAD], 0.0, trie)] for _ in range(source.shape[0])]
         for _ in range(self.item_index.code_length):
             owners, flat = [], []
-            for row, row_beams in enumerate(beams):
-                owners.extend([row] * len(row_beams)); flat.extend(row_beams)
+            for row, row_beams in enumerate(beams): owners.extend([row] * len(row_beams)); flat.extend(row_beams)
             prefixes = torch.tensor([prefix for prefix, _, _ in flat], device=source.device)
             logits_batch = self._decode_logits(source[torch.tensor(owners, device=source.device)], prefixes)[:, -1]
             next_beams = [[] for _ in beams]

@@ -14,7 +14,7 @@ python run.py --debug --epochs 2
 python data/prepare.py --dataset Beauty --download
 python scripts/build_representation.py --dataset Beauty --representation sentence_t5 --artifact-name sentence_t5_tiger --device cuda
 python scripts/build_item_index.py --dataset Beauty --representation sentence_t5_tiger --item-index rqvae --device cuda
-python run.py --dataset Beauty --representation sentence_t5_tiger --item-index rqvae --protocol faithful
+python run.py --dataset Beauty --representation sentence_t5_tiger --item-index rqvae --protocol faithful --device cuda:0
 ```
 
 Amazon Beauty 来自 [UCSD Amazon product data](https://cseweb.ucsd.edu/~jmcauley/datasets/amazon/links.html) 所列的官方 5-core review file（Beauty 为 198,502 条 reviews）及其正常 metadata 文件。默认不再重复 k-core 过滤；按用户时间排序后，最后两个交互依次作为 validation/test，其余为 train。
@@ -40,14 +40,15 @@ Amazon Beauty 来自 [UCSD Amazon product data](https://cseweb.ucsd.edu/~jmcaule
 
 ## TIGER pipeline
 
-TIGER is implemented in two frozen stages: an RQ-VAE produces Semantic IDs, then a Transformer encoder-decoder autoregressively generates the next ID under trie-constrained beam search. Generated IDs are always mapped back to ranked item IDs before Recall/NDCG evaluation.
+TIGER is implemented in two frozen stages: an RQ-VAE produces Semantic IDs, then a randomly initialized T5 encoder-decoder autoregressively generates the next ID under trie-constrained beam search. Generated IDs are always mapped back to ranked item IDs before Recall/NDCG evaluation.
 
 ```bash
 python scripts/build_representation.py --dataset amazon_beauty --representation hashed --dim 32
 python scripts/build_item_index.py --dataset amazon_beauty --representation hashed \
   --item-index rqvae --code-length 3 --codebook-size 256 --epochs 30 --device cuda
-python run.py --dataset amazon_beauty --representation hashed --item-index rqvae \
-  --epochs 30 --batch-size 256 --hidden-dim 128 --heads 4 --layers 2 --max-history 50
+python run.py --dataset Beauty --representation sentence_t5_tiger --item-index rqvae \
+  --steps 200000 --batch-size 256 --lr 0.01 --warmup-steps 10000 \
+  --hidden-dim 128 --heads 6 --layers 4 --d-ff 1024 --d-kv 64 --max-history 20 --beam-width 20 --device cuda:0
 ```
 
 `hashed` is a fast infrastructure smoke-test representation, so it must be reported as `protocol=controlled`; a faithful paper reproduction additionally needs a frozen item-content encoder (such as Sentence-T5) and paper-matched hyperparameters.

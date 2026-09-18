@@ -55,16 +55,15 @@ def _usage(codes: torch.Tensor, codebook_size: int) -> list[dict]:
 
 
 def _disambiguate(codes: torch.Tensor, codebook_size: int) -> tuple[torch.Tensor, list[int], bool, int]:
-    """Append one deterministic token only when multiple items share a SID."""
+    """Append TIGER's fourth token; it is zero for non-colliding items."""
     groups = {}
     for item, code in enumerate(codes[1:].tolist(), 1): groups.setdefault(tuple(code), []).append(item)
     maximum = max(map(len, groups.values()), default=1)
     vocab_sizes = [codebook_size] * codes.shape[1]
-    if maximum == 1: return codes, vocab_sizes, False, maximum
     suffix = torch.zeros(codes.shape[0], 1, dtype=torch.long)
     for group in groups.values():
         for index, item in enumerate(group): suffix[item] = index
-    return torch.cat((codes, suffix), 1), vocab_sizes + [maximum], True, maximum
+    return torch.cat((codes, suffix), 1), vocab_sizes + [maximum], maximum > 1, maximum
 
 
 def _artifact(dataset, representation, codes, codebook_size: int, metadata: dict) -> ItemIndexArtifact:
