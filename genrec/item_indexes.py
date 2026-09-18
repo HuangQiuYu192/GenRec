@@ -176,7 +176,7 @@ class RQVAEBuilder:
                 if not initialized and step >= config.quantization_warmup_steps:
                     with torch.no_grad(): codebooks.copy_(self._initialize_codebooks(encoder(values), size, device))
                     initialized = True
-                residual = latent; quantized = torch.zeros_like(latent); quantization = 0.0
+                residual = latent; quantized = torch.zeros_like(latent); quantization = latent.new_zeros(())
                 if initialized:
                     for codebook in codebooks:
                         assignment = _squared_distance(residual, codebook).argmin(1); selected = codebook[assignment]
