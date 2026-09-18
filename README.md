@@ -11,7 +11,7 @@ pip install -r requirements.txt
 python run.py --debug --epochs 2
 
 # 下载官方 Beauty 5-core reviews 与正常 metadata，并处理为可审计数据文件
-python -m genrec.data.prepare --dataset Beauty --download
+python data/prepare.py --dataset Beauty --download
 python scripts/build_representation.py --dataset Beauty --representation sentence_t5 --device cuda
 python scripts/build_item_index.py --dataset Beauty --representation sentence_t5 --item-index rqvae --device cuda
 python run.py --dataset Beauty --representation sentence_t5 --item-index rqvae --protocol faithful

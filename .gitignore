@@ -4,7 +4,8 @@ __pycache__/
 .venv/
 cache/
 outputs/
-data/
+data/*
+!data/prepare.py
 !genrec/data/
 !genrec/data/**
 genrec/data/__pycache__/
