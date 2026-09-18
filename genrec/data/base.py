@@ -2,6 +2,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 import json
+from collections import Counter
+from statistics import median
 import torch
 from genrec.utils import stable_hash
 
@@ -68,3 +70,24 @@ def load_dataset(root: Path) -> DatasetBundle:
 def write_manifest(root: Path, bundle: DatasetBundle) -> None:
     (root / "manifest.json").write_text(json.dumps({"dataset": bundle.name, "users": bundle.num_users, "items": bundle.num_items,
         "split_hash": bundle.split_hash, **bundle.metadata}, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def write_stats(root: Path, sequences: dict, bundle: DatasetBundle) -> None:
+    """Dataset audit statistics derived from the portable interactions file."""
+    lengths = [len(sequence) for sequence in sequences.values()]
+    popularity = Counter(item for sequence in sequences.values() for item in sequence)
+    counts = list(popularity.values()); threshold = median(counts)
+    long_tail = {item for item, count in popularity.items() if count <= threshold}
+    long_tail_interactions = sum(count for item, count in popularity.items() if item in long_tail)
+    result = {
+        "interaction_count": sum(lengths), "user_count": bundle.num_users, "item_count": len(popularity),
+        "matrix_density": sum(lengths) / (bundle.num_users * max(len(popularity), 1)),
+        "sequence_length": {"min": min(lengths), "median": median(lengths), "mean": sum(lengths) / len(lengths), "max": max(lengths)},
+        "item_frequency": {"min": min(counts), "median": threshold, "mean": sum(counts) / len(counts), "max": max(counts)},
+        "long_tail": {"definition": "item interaction count <= median item frequency", "threshold": threshold,
+                      "item_count": len(long_tail), "item_fraction": len(long_tail) / len(popularity),
+                      "interaction_fraction": long_tail_interactions / sum(lengths)},
+        "split": {"policy": "leave-two-out after timestamp sorting", "validation": "second-to-last", "test": "last"},
+        "internal_mapping": {"user_ids": "lexicographically sorted raw user IDs", "item_ids": "lexicographically sorted raw item IDs", "padding_id": 0},
+    }
+    (root / "stats.json").write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")

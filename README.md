@@ -24,6 +24,7 @@ Amazon Beauty 来自 [UCSD Amazon product data](https://cseweb.ucsd.edu/~jmcaule
 - `interactions.txt`：每行 `raw_user_id raw_item_id_1 raw_item_id_2 ...`，物品按时间顺序排列。
 - `items.jsonl`：每行一个 active item 的 `item_id`、`title`、`categories`、`brand`。
 - `manifest.json`：数据来源、规模与 split hash；`dataset.pt` 是派生加载缓存。
+- `stats.json`：交互/用户/物品规模、稀疏度、序列长度、item 流行度、长尾占比、划分与内部 ID 映射策略。
 - `artifacts/`、`outputs/`：同一数据集对应的表示、SID 与实验产物。
 
 ## Included V1

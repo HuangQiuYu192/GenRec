@@ -5,7 +5,7 @@ import json
 from collections import defaultdict
 from pathlib import Path
 import urllib.request
-from .base import from_sequences, save_dataset, write_manifest, write_sequences
+from .base import from_sequences, save_dataset, write_manifest, write_sequences, write_stats
 
 BEAUTY_5CORE_URL = "https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/reviews_Beauty_5.json.gz"
 BEAUTY_META_URL = "https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/meta_Beauty.json.gz"
@@ -39,8 +39,9 @@ def prepare_beauty(root=Path("data/Beauty"), download=True):
                 target.write(json.dumps({"item_id": asin, "title": item.get("title") or "", "categories": item.get("categories") or [],
                     "brand": item.get("brand") or ""}, ensure_ascii=False) + "\n")
     bundle = from_sequences(sequences, "Beauty", {"source": "UCSD Amazon 2014 official Beauty 5-core reviews", "fit_scope": "official_5core",
-        "reviews": sum(map(len, sequences.values())), "item_auxiliary_file": "items.jsonl"})
-    save_dataset(bundle, root); write_manifest(root, bundle); return bundle
+        "reviews": sum(map(len, sequences.values())), "item_auxiliary_file": "items.jsonl", "split_policy": "timestamp order; second-to-last validation; last test",
+        "internal_mapping_policy": "lexicographically sorted raw IDs; padding item ID 0"})
+    save_dataset(bundle, root); write_manifest(root, bundle); write_stats(root, sequences, bundle); return bundle
 
 
 def load_item_texts(items_path: Path, item_mapping: dict) -> list:
