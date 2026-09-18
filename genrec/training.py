@@ -21,7 +21,7 @@ def make_batches(examples, batch_size, device):
 
 class Trainer:
     def __init__(self, epochs=None, steps=None, batch_size=256, lr=.01, optimizer="adagrad", warmup_steps=10_000,
-                 device="cpu", max_history=20, log_path=None, eval_every_steps=None, early_stop_patience=None,
+                 device="cpu", max_history=20, log_path=None, eval_batch_size=None, eval_every_steps=None, early_stop_patience=None,
                  early_stop_metric="NDCG@10", min_delta=0.0, checkpoint_path=None):
         if steps is None and epochs is None: epochs = 5
         if optimizer not in {"adagrad", "adamw"}: raise ValueError("optimizer must be adagrad or adamw.")
@@ -29,6 +29,7 @@ class Trainer:
         self.optimizer_name, self.warmup_steps = optimizer, warmup_steps
         self.device, self.max_history = torch.device(device), max_history
         self.log_path = Path(log_path) if log_path else None
+        self.eval_batch_size = eval_batch_size or batch_size
         self.eval_every_steps, self.early_stop_patience = eval_every_steps, early_stop_patience
         self.early_stop_metric, self.min_delta = early_stop_metric, min_delta
         self.checkpoint_path = Path(checkpoint_path) if checkpoint_path else None
@@ -48,7 +49,7 @@ class Trainer:
         examples, history = prefix_examples(dataset.train_sequences, self.max_history), []
         target_steps = self.steps; epoch = step = 0; best_metric = float("-inf"); best_step = None; stale = 0; stopped_early = False
         self._log("train_started", epochs=self.epochs, steps=target_steps, batch_size=self.batch_size, lr=self.lr, optimizer=self.optimizer_name,
-                  warmup_steps=self.warmup_steps, device=str(self.device), train_examples=len(examples), eval_every_steps=self.eval_every_steps,
+                  warmup_steps=self.warmup_steps, device=str(self.device), train_examples=len(examples), eval_batch_size=self.eval_batch_size, eval_every_steps=self.eval_every_steps,
                   early_stop_patience=self.early_stop_patience, early_stop_metric=self.early_stop_metric, min_delta=self.min_delta)
         while target_steps is None or step < target_steps:
             epoch += 1
@@ -94,5 +95,5 @@ class Trainer:
     @torch.no_grad()
     def evaluate(self, model, examples):
         model.eval(); predictions, targets = [], []
-        for batch in make_batches(examples, self.batch_size, self.device): predictions.append(model.recommend(batch, 20).cpu()); targets.append(batch["target"].cpu())
+        for batch in make_batches(examples, self.eval_batch_size, self.device): predictions.append(model.recommend(batch, 20).cpu()); targets.append(batch["target"].cpu())
         return ranking_metrics(torch.cat(predictions), torch.cat(targets))

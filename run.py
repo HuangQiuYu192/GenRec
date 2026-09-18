@@ -16,6 +16,7 @@ p = argparse.ArgumentParser(description="Train/evaluate a paper-configured TIGER
 p.add_argument("--dataset", default="synthetic"); p.add_argument("--representation", default="hashed"); p.add_argument("--item-index", default="rqvae")
 p.add_argument("--steps", type=int, default=None, help="Training updates; Beauty faithful default is 200000."); p.add_argument("--epochs", type=int, default=None, help="Testing-only alternative to --steps.")
 p.add_argument("--batch-size", type=int, default=256); p.add_argument("--lr", type=float, default=.01); p.add_argument("--warmup-steps", type=int, default=10_000)
+p.add_argument("--eval-batch-size", type=int, default=32, help="Smaller batch for beam-search validation/test.")
 p.add_argument("--hidden-dim", type=int, default=128); p.add_argument("--heads", type=int, default=6); p.add_argument("--layers", type=int, default=4)
 p.add_argument("--d-ff", type=int, default=1024); p.add_argument("--d-kv", type=int, default=64); p.add_argument("--dropout", type=float, default=.1)
 p.add_argument("--max-history", type=int, default=20); p.add_argument("--beam-width", type=int, default=20); p.add_argument("--device", default=None)
@@ -35,14 +36,14 @@ path = (Path("outputs") if a.debug or a.dataset == "synthetic" else root / "outp
 steps = a.steps if a.steps is not None else (None if (a.debug or a.dataset == "synthetic") else 200_000)
 epochs = a.epochs if a.epochs is not None else (2 if steps is None else None)
 trainer = Trainer(epochs=epochs, steps=steps, batch_size=a.batch_size, lr=a.lr, optimizer="adagrad", warmup_steps=a.warmup_steps,
-    device=device, max_history=a.max_history, log_path=path.with_suffix(".jsonl"), eval_every_steps=a.eval_every_steps,
+    device=device, max_history=a.max_history, log_path=path.with_suffix(".jsonl"), eval_batch_size=a.eval_batch_size, eval_every_steps=a.eval_every_steps,
     early_stop_patience=a.early_stop_patience, early_stop_metric=a.early_stop_metric, min_delta=a.min_delta,
     checkpoint_path=path.with_name(path.stem + "_best.pt"))
 model = TigerModel(dataset.num_items, index, a.hidden_dim, a.heads, a.layers, a.dropout, a.max_history, a.d_ff, a.d_kv, a.beam_width)
 resource = trainer.fit(model, dataset, dataset.valid_examples); valid = trainer.evaluate(model, dataset.valid_examples); test = trainer.evaluate(model, dataset.test_examples)
 output = {"dataset": dataset.name, "protocol": a.protocol, "device": device, "generator": {"architecture": "T5ForConditionalGeneration",
     "user_tokens": False, "max_history": a.max_history, "steps": steps, "epochs": epochs, "batch_size": a.batch_size, "optimizer": "adagrad",
-    "lr": a.lr, "warmup_steps": a.warmup_steps, "beam_width": a.beam_width, "eval_every_steps": a.eval_every_steps,
+    "lr": a.lr, "warmup_steps": a.warmup_steps, "eval_batch_size": a.eval_batch_size, "beam_width": a.beam_width, "eval_every_steps": a.eval_every_steps,
     "early_stop_patience": a.early_stop_patience, "early_stop_metric": a.early_stop_metric, "min_delta": a.min_delta}, "valid_metrics": valid, "test_metrics": test,
     "index": index.diagnostics(), "resource": resource}
 write_json(path, output); torch.save({"model": model.state_dict(), "output": output}, path.with_suffix(".pt"))
