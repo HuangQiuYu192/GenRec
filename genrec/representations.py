@@ -43,7 +43,7 @@ class SentenceT5Config:
     pooling: str = "mean"
     normalize: str = "none"
     standardize: str = "none"
-    precision: str = "auto"
+    precision: str = "float32"
     local_files_only: bool = False
     log_every: int = 100
 
@@ -67,7 +67,10 @@ class SentenceT5RepresentationBuilder:
 
     @staticmethod
     def _autocast(device: torch.device, precision: str):
-        if device.type != "cuda" or precision == "float32": return torch.autocast(device_type=device.type, enabled=False)
+        # Sentence-T5's T5 blocks can overflow in fp16 for some catalog text.
+        # A faithful/reproducible default therefore keeps encoder inference fp32;
+        # lower precision remains an explicit throughput ablation.
+        if device.type != "cuda" or precision in {"float32", "auto"}: return torch.autocast(device_type=device.type, enabled=False)
         dtype = {"float16": torch.float16, "bfloat16": torch.bfloat16}.get(precision, torch.float16)
         return torch.autocast(device_type="cuda", dtype=dtype)
 

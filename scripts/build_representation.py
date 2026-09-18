@@ -16,7 +16,7 @@ p.add_argument("--dim", type=int, default=32); p.add_argument("--seed", type=int
 p.add_argument("--model-name", default="sentence-transformers/sentence-t5-base"); p.add_argument("--revision", default=None)
 p.add_argument("--batch-size", type=int, default=64); p.add_argument("--device", default=None); p.add_argument("--max-length", type=int, default=128)
 p.add_argument("--pooling", choices=["mean", "first"], default="mean"); p.add_argument("--normalize", choices=["none", "l2"], default="none")
-p.add_argument("--standardize", choices=["none", "per_dimension"], default="none"); p.add_argument("--precision", choices=["auto", "float32", "float16", "bfloat16"], default="auto")
+p.add_argument("--standardize", choices=["none", "per_dimension"], default="none"); p.add_argument("--precision", choices=["auto", "float32", "float16", "bfloat16"], default="float32")
 p.add_argument("--local-files-only", action="store_true"); p.add_argument("--log-every", type=int, default=100)
 p.add_argument("--text-fields", default="title,brand,categories,price", help="Comma-separated fields: title,brand,categories,price,description")
 p.add_argument("--text-template", choices=["tiger", "labeled", "plain"], default="tiger")

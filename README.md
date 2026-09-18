@@ -55,7 +55,7 @@ python run.py --dataset Beauty --representation sentence_t5_tiger --item-index r
 
 ### Sentence-T5
 
-The default `sentence_t5` configuration follows TIGER's content protocol: frozen `sentence-transformers/sentence-t5-base`, direct `T5EncoderModel` output, attention-mask mean pooling, and the labeled `Title`/`Brand`/`Categories`/`Price` text sentence. It deliberately does not apply a SentenceTransformer projection head, vector normalization, or standardization by default. Each choice is recorded in the representation artifact metadata.
+The default `sentence_t5` configuration follows TIGER's content protocol: frozen `sentence-transformers/sentence-t5-base`, direct `T5EncoderModel` output, attention-mask mean pooling, and the labeled `Title`/`Brand`/`Categories`/`Price` text sentence. It deliberately does not apply a SentenceTransformer projection head, vector normalization, or standardization by default, and uses fp32 inference because fp16 can produce non-finite T5 activations for catalog text. Each choice is recorded in the representation artifact metadata.
 
 Useful controlled variants include `--text-fields title,brand,categories,price,description`, `--text-template labeled`, `--custom-template "Title: {title}. Description: {description}."`, `--max-length 256`, `--pooling first`, `--normalize l2`, `--standardize per_dimension`, `--precision bfloat16`, `--revision <commit>`, and `--local-files-only`. Give variants distinct `--artifact-name` values so downstream SID indexes remain traceable.
 
