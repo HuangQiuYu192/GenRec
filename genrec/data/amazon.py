@@ -1,4 +1,5 @@
 """Official Amazon 2014 5-core download and portable Beauty preprocessing."""
+from __future__ import annotations
 import ast
 import gzip
 import json
@@ -36,20 +37,43 @@ def prepare_beauty(root=Path("data/Beauty"), download=True):
         for line in source:
             item = ast.literal_eval(line); asin = str(item.get("asin", ""))
             if asin in active_items:
+                description = item.get("description") or ""
+                if isinstance(description, list): description = " ".join(map(str, description))
                 target.write(json.dumps({"item_id": asin, "title": item.get("title") or "", "categories": item.get("categories") or [],
-                    "brand": item.get("brand") or ""}, ensure_ascii=False) + "\n")
+                    "brand": item.get("brand") or "", "price": item.get("price") or "", "description": description}, ensure_ascii=False) + "\n")
     bundle = from_sequences(sequences, "Beauty", {"source": "UCSD Amazon 2014 official Beauty 5-core reviews", "fit_scope": "official_5core",
         "reviews": sum(map(len, sequences.values())), "item_auxiliary_file": "items.jsonl", "split_policy": "timestamp order; second-to-last validation; last test",
         "internal_mapping_policy": "lexicographically sorted raw IDs; padding item ID 0"})
     save_dataset(bundle, root); write_manifest(root, bundle); write_stats(root, sequences, bundle); return bundle
 
 
-def load_item_texts(items_path: Path, item_mapping: dict) -> list:
+def _category_text(categories) -> str:
+    return " | ".join(" > ".join(map(str, path)) for path in categories if path)
+
+
+def _item_text(item: dict, fields: tuple[str, ...], template: str, custom_template: str | None) -> str:
+    values = {"title": str(item.get("title") or "").strip(), "brand": str(item.get("brand") or "").strip(),
+              "categories": _category_text(item.get("categories") or []), "price": str(item.get("price") or "").strip(),
+              "description": str(item.get("description") or "").strip()}
+    selected = {key: values.get(key, "") for key in fields}
+    if custom_template:
+        return custom_template.format(**values).strip() or str(item["item_id"])
+    if template == "tiger":
+        return " ".join(f"{key.title()}: {selected[key]}." for key in ("title", "brand", "categories", "price") if key in selected and selected[key]) or str(item["item_id"])
+    if template == "labeled":
+        return " ".join(f"{key.title()}: {value}." for key, value in selected.items() if value) or str(item["item_id"])
+    if template == "plain": return " ".join(value for value in selected.values() if value) or str(item["item_id"])
+    raise ValueError(f"Unknown item text template: {template}")
+
+
+def load_item_texts(items_path: Path, item_mapping: dict, fields=("title", "brand", "categories", "price"), template="tiger", custom_template=None) -> list:
+    fields = tuple(fields)
+    invalid = set(fields) - {"title", "brand", "categories", "price", "description"}
+    if invalid: raise ValueError(f"Unknown item-text fields: {sorted(invalid)}")
     texts = [""] * (len(item_mapping) + 1)
     with Path(items_path).open(encoding="utf-8") as handle:
         for line in handle:
             item = json.loads(line); item_id = item["item_id"]
             if item_id not in item_mapping: continue
-            categories = " ".join(" ".join(path) for path in item.get("categories", []))
-            texts[item_mapping[item_id]] = (item.get("title", "") + " " + item.get("brand", "") + " " + categories).strip() or item_id
+            texts[item_mapping[item_id]] = _item_text(item, fields, template, custom_template)
     return texts

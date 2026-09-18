@@ -12,9 +12,9 @@ python run.py --debug --epochs 2
 
 # 下载官方 Beauty 5-core reviews 与正常 metadata，并处理为可审计数据文件
 python data/prepare.py --dataset Beauty --download
-python scripts/build_representation.py --dataset Beauty --representation sentence_t5 --device cuda
-python scripts/build_item_index.py --dataset Beauty --representation sentence_t5 --item-index rqvae --device cuda
-python run.py --dataset Beauty --representation sentence_t5 --item-index rqvae --protocol faithful
+python scripts/build_representation.py --dataset Beauty --representation sentence_t5 --artifact-name sentence_t5_tiger --device cuda
+python scripts/build_item_index.py --dataset Beauty --representation sentence_t5_tiger --item-index rqvae --device cuda
+python run.py --dataset Beauty --representation sentence_t5_tiger --item-index rqvae --protocol faithful
 ```
 
 Amazon Beauty 来自 [UCSD Amazon product data](https://cseweb.ucsd.edu/~jmcauley/datasets/amazon/links.html) 所列的官方 5-core review file（Beauty 为 198,502 条 reviews）及其正常 metadata 文件。默认不再重复 k-core 过滤；按用户时间排序后，最后两个交互依次作为 validation/test，其余为 train。
@@ -22,7 +22,7 @@ Amazon Beauty 来自 [UCSD Amazon product data](https://cseweb.ucsd.edu/~jmcaule
 处理后数据统一位于 `data/Beauty/`：
 
 - `interactions.txt`：每行 `raw_user_id raw_item_id_1 raw_item_id_2 ...`，物品按时间顺序排列。
-- `items.jsonl`：每行一个 active item 的 `item_id`、`title`、`categories`、`brand`。
+- `items.jsonl`：每行一个 active item 的 `item_id`、`title`、`categories`、`brand`、`price`、`description`。
 - `manifest.json`：数据来源、规模与 split hash；`dataset.pt` 是派生加载缓存。
 - `stats.json`：交互/用户/物品规模、稀疏度、序列长度、item 流行度、长尾占比、划分与内部 ID 映射策略。
 - `artifacts/`、`outputs/`：同一数据集对应的表示、SID 与实验产物。
@@ -51,3 +51,9 @@ python run.py --dataset amazon_beauty --representation hashed --item-index rqvae
 ```
 
 `hashed` is a fast infrastructure smoke-test representation, so it must be reported as `protocol=controlled`; a faithful paper reproduction additionally needs a frozen item-content encoder (such as Sentence-T5) and paper-matched hyperparameters.
+
+### Sentence-T5
+
+The default `sentence_t5` configuration follows TIGER's content protocol: frozen `sentence-transformers/sentence-t5-base`, direct `T5EncoderModel` output, attention-mask mean pooling, and the labeled `Title`/`Brand`/`Categories`/`Price` text sentence. It deliberately does not apply a SentenceTransformer projection head, vector normalization, or standardization by default. Each choice is recorded in the representation artifact metadata.
+
+Useful controlled variants include `--text-fields title,brand,categories,price,description`, `--text-template labeled`, `--custom-template "Title: {title}. Description: {description}."`, `--max-length 256`, `--pooling first`, `--normalize l2`, `--standardize per_dimension`, `--precision bfloat16`, `--revision <commit>`, and `--local-files-only`. Give variants distinct `--artifact-name` values so downstream SID indexes remain traceable.
