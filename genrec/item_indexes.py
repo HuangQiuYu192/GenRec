@@ -104,6 +104,7 @@ class RQVAEConfig:
     batch_size: int = 1024
     lr: float = 0.4
     optimizer: str = "adagrad"
+    adagrad_initial_accumulator_value: float = .1
     commitment_weight: float = 0.25
     kmeans_init: bool = True
     kmeans_iterations: int = 20
@@ -114,7 +115,7 @@ class RQVAEConfig:
 
     def __post_init__(self):
         if self.code_length < 1 or self.codebook_size < 1 or self.latent_dim < 1: raise ValueError("Codebook dimensions must be positive.")
-        if self.epochs < 1 or self.batch_size < 1 or self.lr <= 0: raise ValueError("epochs, batch_size, and lr must be positive.")
+        if self.epochs < 1 or self.batch_size < 1 or self.lr <= 0 or self.adagrad_initial_accumulator_value < 0: raise ValueError("Invalid optimizer/training parameters.")
         if self.optimizer not in {"adagrad", "adamw"}: raise ValueError("optimizer must be adagrad or adamw.")
         if self.commitment_weight < 0: raise ValueError("commitment_weight must be non-negative.")
 
@@ -156,7 +157,8 @@ class RQVAEBuilder:
         with torch.no_grad(): initial_latent = encoder(values)
         codebooks = torch.nn.Parameter(self._initialize_codebooks(initial_latent, size, device))
         parameters = list(encoder.parameters()) + list(decoder.parameters()) + [codebooks]
-        optimizer = torch.optim.Adagrad(parameters, lr=config.lr) if config.optimizer == "adagrad" else torch.optim.AdamW(parameters, lr=config.lr)
+        optimizer = (torch.optim.Adagrad(parameters, lr=config.lr, initial_accumulator_value=config.adagrad_initial_accumulator_value)
+                     if config.optimizer == "adagrad" else torch.optim.AdamW(parameters, lr=config.lr))
         generator = torch.Generator(device=device).manual_seed(config.seed + 1); step = 0; final = {}
         for epoch in range(1, config.epochs + 1):
             totals = {"loss": 0.0, "reconstruction": 0.0, "quantization": 0.0, "items": 0}
