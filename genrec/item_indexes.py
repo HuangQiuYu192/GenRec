@@ -109,6 +109,10 @@ class RQVAEConfig:
     kmeans_init: bool = True
     kmeans_iterations: int = 20
     quantization_warmup_steps: int = 0
+    defer_kmeans_until_warmup: bool = False
+    cosine_decay: bool = False
+    reset_usage_threshold: float | None = None
+    reset_check_every: int = 0
     seed: int = 42
     device: str | None = None
     log_every: int = 100
@@ -118,6 +122,7 @@ class RQVAEConfig:
         if self.epochs < 1 or self.batch_size < 1 or self.lr <= 0 or self.adagrad_initial_accumulator_value < 0: raise ValueError("Invalid optimizer/training parameters.")
         if self.optimizer not in {"adagrad", "adamw"}: raise ValueError("optimizer must be adagrad or adamw.")
         if self.commitment_weight < 0: raise ValueError("commitment_weight must be non-negative.")
+        if self.reset_usage_threshold is not None and not 0 < self.reset_usage_threshold <= 1: raise ValueError("reset_usage_threshold must be in (0, 1].")
 
 
 def _mlp(dimensions: list[int]) -> torch.nn.Sequential:
@@ -137,6 +142,7 @@ class RQVAEBuilder:
         if hidden_dim is not None and "hidden_dims" not in kwargs: kwargs["hidden_dims"] = (hidden_dim,)
         self.config = RQVAEConfig(code_length=code_length, codebook_size=codebook_size, epochs=epochs,
             batch_size=batch_size, lr=lr, seed=seed, device=device, **kwargs)
+        self.kind = "rqvae"
 
     def _initialize_codebooks(self, latent, size, device):
         config = self.config; generator = torch.Generator(device=device).manual_seed(config.seed)
@@ -155,34 +161,68 @@ class RQVAEBuilder:
         encoder = _mlp([values.shape[1], *config.hidden_dims, config.latent_dim]).to(device)
         decoder = _mlp([config.latent_dim, *reversed(config.hidden_dims), values.shape[1]]).to(device)
         with torch.no_grad(): initial_latent = encoder(values)
-        codebooks = torch.nn.Parameter(self._initialize_codebooks(initial_latent, size, device))
+        initial_codebooks = (torch.zeros(config.code_length, size, config.latent_dim, device=device)
+                             if config.defer_kmeans_until_warmup else self._initialize_codebooks(initial_latent, size, device))
+        codebooks = torch.nn.Parameter(initial_codebooks)
         parameters = list(encoder.parameters()) + list(decoder.parameters()) + [codebooks]
         optimizer = (torch.optim.Adagrad(parameters, lr=config.lr, initial_accumulator_value=config.adagrad_initial_accumulator_value)
                      if config.optimizer == "adagrad" else torch.optim.AdamW(parameters, lr=config.lr))
-        generator = torch.Generator(device=device).manual_seed(config.seed + 1); step = 0; final = {}
+        generator = torch.Generator(device=device).manual_seed(config.seed + 1); step = 0; final = {}; initialized = not config.defer_kmeans_until_warmup
+        total_steps = config.epochs * ((len(values) + config.batch_size - 1) // config.batch_size)
         for epoch in range(1, config.epochs + 1):
             totals = {"loss": 0.0, "reconstruction": 0.0, "quantization": 0.0, "items": 0}
             for indices in torch.randperm(len(values), generator=generator, device=device).split(config.batch_size):
-                source = values[indices]; latent = encoder(source); residual = latent; quantized = torch.zeros_like(latent); quantization = 0.0
-                for codebook in codebooks:
-                    assignment = _squared_distance(residual, codebook).argmin(1); selected = codebook[assignment]
-                    quantized = quantized + selected
-                    quantization = quantization + F.mse_loss(selected, residual.detach()) + config.commitment_weight * F.mse_loss(residual, selected.detach())
-                    # Residual quantization is stage-wise: later-stage losses must
-                    # not alter an earlier selected codeword through this residual.
-                    residual = residual - selected.detach()
-                reconstruction = F.mse_loss(decoder(latent + (quantized - latent).detach()), source)
-                warmup = min(1.0, step / max(config.quantization_warmup_steps, 1)) if config.quantization_warmup_steps else 1.0
+                source = values[indices]; latent = encoder(source)
+                if not initialized and step >= config.quantization_warmup_steps:
+                    with torch.no_grad(): codebooks.copy_(self._initialize_codebooks(encoder(values), size, device))
+                    initialized = True
+                residual = latent; quantized = torch.zeros_like(latent); quantization = 0.0
+                if initialized:
+                    for codebook in codebooks:
+                        assignment = _squared_distance(residual, codebook).argmin(1); selected = codebook[assignment]
+                        quantized = quantized + selected
+                        quantization = quantization + F.mse_loss(selected, residual.detach()) + config.commitment_weight * F.mse_loss(residual, selected.detach())
+                        residual = residual - selected.detach()
+                reconstruction = F.mse_loss(decoder(latent + (quantized - latent).detach()) if initialized else decoder(latent), source)
+                warmup = min(1.0, (step - config.quantization_warmup_steps) / max(config.quantization_warmup_steps, 1)) if initialized and config.quantization_warmup_steps else float(initialized)
                 loss = reconstruction + warmup * quantization
-                optimizer.zero_grad(); loss.backward(); optimizer.step(); step += 1
+                optimizer.zero_grad(); loss.backward()
+                if config.cosine_decay:
+                    lr = config.lr * .5 * (1 + torch.cos(torch.tensor(torch.pi * step / max(total_steps, 1))).item())
+                    for group in optimizer.param_groups: group["lr"] = lr
+                optimizer.step(); step += 1
                 amount = len(source); totals["loss"] += loss.item() * amount; totals["reconstruction"] += reconstruction.item() * amount
                 totals["quantization"] += quantization.detach().item() * amount; totals["items"] += amount
             with torch.no_grad(): current_codes, residual = _residual_codes(encoder(values), codebooks)
             final = {key: value / totals["items"] for key, value in totals.items() if key != "items"}
             final.update({"residual_mse": float(residual.square().mean()), "codebook_usage": _usage(current_codes, size)})
+            if initialized and config.reset_usage_threshold and config.reset_check_every and epoch % config.reset_check_every == 0:
+                low = [row["ratio"] < config.reset_usage_threshold for row in final["codebook_usage"]]
+                if any(low):
+                    with torch.no_grad():
+                        refreshed = self._initialize_codebooks(encoder(values), size, device)
+                        for level, reset in enumerate(low):
+                            if reset: codebooks[level].copy_(refreshed[level])
+                    optimizer.state.pop(codebooks, None)
             if config.log_every and (epoch == 1 or epoch == config.epochs or epoch % config.log_every == 0):
                 usage = ", ".join(f"L{i}:{row['active']}/{row['total']}" for i, row in enumerate(final["codebook_usage"]))
                 print(f"[rqvae] epoch={epoch}/{config.epochs} loss={final['loss']:.6f} recon={final['reconstruction']:.6f} usage={usage}", flush=True)
         codes = torch.zeros(dataset.num_items, config.code_length, dtype=torch.long); codes[1:] = current_codes.cpu()
-        return _artifact(dataset, representation, codes, size, {"kind": "rqvae", "fit_scope": "train_only" if representation.metadata["fit_scope"] == "train_only" else "frozen",
+        return _artifact(dataset, representation, codes, size, {"kind": self.kind, "fit_scope": "train_only" if representation.metadata["fit_scope"] == "train_only" else "frozen",
             **asdict(config), "final_diagnostics": final})
+
+
+class RQVAEStableBuilder(RQVAEBuilder):
+    """Practical Beauty tokenizer protocol inspired by public TIGER reproductions.
+
+    This is intentionally distinct from the paper-spec builder: it records every
+    stabilization choice (AE pretraining, deferred K-means, cosine decay and
+    codebook resets) in the artifact metadata.
+    """
+    def __init__(self, **overrides):
+        defaults = dict(epochs=3000, batch_size=1024, lr=1e-3, optimizer="adamw", kmeans_init=True,
+            kmeans_iterations=20, quantization_warmup_steps=500, defer_kmeans_until_warmup=True,
+            cosine_decay=True, reset_usage_threshold=.30, reset_check_every=100, log_every=25)
+        defaults.update(overrides)
+        super().__init__(**defaults)
+        self.kind = "rqvae_stable"
