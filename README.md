@@ -10,20 +10,21 @@ pip install -r requirements.txt
 # 无需下载数据的端到端 smoke run
 python run.py --debug --epochs 2
 
-# 从 UCSD 官方 Amazon 链接下载 Beauty 的官方 5-core reviews 后处理
-python scripts/prepare_dataset.py --amazon beauty --download --dataset amazon_beauty
-
-# 如需从完整 reviews 文件自行重建 5-core：
-python scripts/prepare_dataset.py --amazon beauty --amazon-source full --download --dataset amazon_beauty
-
-# 或将自备 CSV（user_id,item_id,timestamp）处理为 benchmark cache
-python scripts/prepare_dataset.py --input data/interactions.csv --dataset amazon_beauty
-python scripts/build_representation.py --dataset amazon_beauty --representation hashed
-python scripts/build_item_index.py --dataset amazon_beauty --representation hashed --item-index rqkmeans
-python run.py --dataset amazon_beauty --representation hashed --item-index rqkmeans
+# 下载官方 Beauty 5-core reviews 与正常 metadata，并处理为可审计数据文件
+python -m genrec.data.prepare --dataset Beauty --download
+python scripts/build_representation.py --dataset Beauty --representation sentence_t5 --device cuda
+python scripts/build_item_index.py --dataset Beauty --representation sentence_t5 --item-index rqvae --device cuda
+python run.py --dataset Beauty --representation sentence_t5 --item-index rqvae --protocol faithful
 ```
 
-CSV 必须包含 `user_id,item_id,timestamp` 三列。Amazon Beauty 来自 [UCSD Amazon product data](https://cseweb.ucsd.edu/~jmcauley/datasets/amazon/links.html) 所列的官方 5-core review file（Beauty 为 198,502 条 reviews）。该文件仍会通过本项目的迭代 5-core 校验（用户与物品交互数均至少为 5）；可用 `--amazon-source full` 下载完整 reviews 并在本地重建。随后按用户时间排序，最后两个交互依次作为 validation/test，其余为 train。所有可训练 artifact 只拟合 train。
+Amazon Beauty 来自 [UCSD Amazon product data](https://cseweb.ucsd.edu/~jmcauley/datasets/amazon/links.html) 所列的官方 5-core review file（Beauty 为 198,502 条 reviews）及其正常 metadata 文件。默认不再重复 k-core 过滤；按用户时间排序后，最后两个交互依次作为 validation/test，其余为 train。
+
+处理后数据统一位于 `data/Beauty/`：
+
+- `interactions.txt`：每行 `raw_user_id raw_item_id_1 raw_item_id_2 ...`，物品按时间顺序排列。
+- `items.jsonl`：每行一个 active item 的 `item_id`、`title`、`categories`、`brand`。
+- `manifest.json`：数据来源、规模与 split hash；`dataset.pt` 是派生加载缓存。
+- `artifacts/`、`outputs/`：同一数据集对应的表示、SID 与实验产物。
 
 ## Included V1
 
