@@ -168,7 +168,9 @@ class RQVAEBuilder:
                     assignment = _squared_distance(residual, codebook).argmin(1); selected = codebook[assignment]
                     quantized = quantized + selected
                     quantization = quantization + F.mse_loss(selected, residual.detach()) + config.commitment_weight * F.mse_loss(residual, selected.detach())
-                    residual = residual - selected
+                    # Residual quantization is stage-wise: later-stage losses must
+                    # not alter an earlier selected codeword through this residual.
+                    residual = residual - selected.detach()
                 reconstruction = F.mse_loss(decoder(latent + (quantized - latent).detach()), source)
                 warmup = min(1.0, step / max(config.quantization_warmup_steps, 1)) if config.quantization_warmup_steps else 1.0
                 loss = reconstruction + warmup * quantization
