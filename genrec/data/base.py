@@ -4,6 +4,7 @@ from pathlib import Path
 import json
 from collections import Counter
 from statistics import median
+from typing import Optional
 import torch
 from genrec.utils import stable_hash
 
@@ -20,6 +21,9 @@ class DatasetBundle:
     split_hash: str
     name: str = "synthetic"
     metadata: dict = None
+    # Parallel to ``train_sequences``.  Optional so datasets written by older
+    # benchmark versions can still be loaded for non-personalized models.
+    train_user_ids: Optional[list] = None
 
 
 def dataset_dir(name: str) -> Path:
@@ -33,14 +37,19 @@ def from_sequences(raw_sequences, name, metadata=None):
     item_values = sorted({item for sequence in raw_sequences.values() for item in sequence})
     item_mapping = {item: idx + 1 for idx, item in enumerate(item_values)}  # 0 is padding
     train, valid, test, split_material = [], [], [], []
+    train_users = []
+    # Preserve the file's interaction ordering: it is part of the existing
+    # split fingerprint used by representation and index artifacts.
     for user, sequence in raw_sequences.items():
         values = [item_mapping[item] for item in sequence]
         if len(values) < 3: continue
-        train.append(values[:-2]); valid.append((values[:-2], values[-2])); test.append((values[:-1], values[-1]))
+        user_id = user_mapping[user]
+        train.append(values[:-2]); train_users.append(user_id)
+        valid.append((values[:-2], values[-2], user_id)); test.append((values[:-1], values[-1], user_id))
         split_material.append((user, values))
     if not train: raise ValueError("Processed sequences need at least one user with three interactions.")
     return DatasetBundle(train, valid, test, len(user_mapping), len(item_mapping) + 1, user_mapping, item_mapping,
-                         stable_hash(split_material), name, metadata or {})
+                         stable_hash(split_material), name, metadata or {}, train_users)
 
 
 def write_sequences(path: Path, sequences: dict) -> None:

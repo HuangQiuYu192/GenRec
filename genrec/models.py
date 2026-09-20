@@ -13,33 +13,38 @@ class TigerSerializer:
     """Disjoint vocabulary ranges for each SID level and item separators."""
     PAD, EOS, SEP = 0, 1, 2
 
-    def __init__(self, vocab_sizes):
+    def __init__(self, vocab_sizes, user_token_count=0):
         self.vocab_sizes = list(vocab_sizes); self.offsets = []; cursor = 3
         for size in vocab_sizes: self.offsets.append(cursor); cursor += size
-        self.vocab_size = cursor
+        self.user_offset, self.user_token_count = cursor, user_token_count
+        self.vocab_size = cursor + user_token_count
 
     def code_tokens(self, codes): return codes + torch.tensor(self.offsets, device=codes.device)
     def local_code(self, token, level): return token - self.offsets[level]
+
+    def user_token(self, user_ids): return user_ids.remainder(self.user_token_count) + self.user_offset
 
 
 class TigerModel(BaseGRModel):
     """TIGER's T5-style seq2seq generator over frozen Semantic IDs.
 
-    The model deliberately omits user-ID tokens: this is the requested
-    non-personalized ablation, while every remaining architectural setting is
-    the paper's 4 encoder/4 decoder layers, d_model=128, d_ff=1024, six heads
-    with d_kv=64, ReLU, and dropout 0.1.
+    The default configuration follows TIGER's paper architecture: 4 encoder/
+    decoder layers, d_model=128, d_ff=1024, six heads with d_kv=64, ReLU,
+    dropout 0.1, and 2,000 hashed user tokens.  User tokens can be disabled
+    for the explicitly non-personalized ablation.
     """
     def __init__(self, num_items, item_index, hidden_dim=128, num_heads=6, num_layers=4, dropout=.1,
-                 max_history=20, d_ff=1024, d_kv=64, beam_width=20):
+                 max_history=20, d_ff=1024, d_kv=64, beam_width=20, user_tokens=True, user_token_count=2000):
         super().__init__()
         if item_index is None: raise ValueError("TigerModel requires an ItemIndexArtifact.")
         try:
             from transformers import T5Config, T5ForConditionalGeneration
         except ImportError as error:
             raise ImportError("TIGER's T5 generator requires transformers. Run: pip install -r requirements.txt") from error
+        if user_tokens and user_token_count < 1: raise ValueError("user_token_count must be positive when user tokens are enabled.")
         self.item_index, self.max_history, self.beam_width = item_index, max_history, beam_width
-        self.serializer = TigerSerializer(item_index.vocab_sizes)
+        self.user_tokens, self.user_token_count = user_tokens, user_token_count if user_tokens else 0
+        self.serializer = TigerSerializer(item_index.vocab_sizes, self.user_token_count)
         self.register_buffer("item_to_code", item_index.item_to_code.clone())
         config = T5Config(vocab_size=self.serializer.vocab_size, d_model=hidden_dim, d_kv=d_kv, d_ff=d_ff,
             num_layers=num_layers, num_decoder_layers=num_layers, num_heads=num_heads, dropout_rate=dropout,
@@ -47,10 +52,11 @@ class TigerModel(BaseGRModel):
             decoder_start_token_id=TigerSerializer.PAD, use_cache=False)
         self.t5 = T5ForConditionalGeneration(config)
 
-    def _history_tokens(self, histories):
+    def _history_tokens(self, histories, users=None):
+        if self.user_tokens and users is None: raise ValueError("TIGER with user tokens requires batch['user'].")
         rows = []
         for history in histories.tolist():
-            tokens = []
+            tokens = ([self.serializer.user_token(users[len(rows)]).item()] if self.user_tokens else [])
             for item in [item for item in history if item][-self.max_history:]:
                 tokens.extend(self.serializer.code_tokens(self.item_to_code[item]).tolist())
                 tokens.append(TigerSerializer.SEP)
@@ -64,7 +70,7 @@ class TigerModel(BaseGRModel):
             decoder_input_ids=decoder_input).logits
 
     def training_step(self, batch):
-        source = self._history_tokens(batch["history"])
+        source = self._history_tokens(batch["history"], batch.get("user"))
         codes = self.item_to_code[batch["target"]]
         labels = torch.cat((self.serializer.code_tokens(codes), codes.new_full((len(codes), 1), TigerSerializer.EOS)), 1)
         output = self.t5(input_ids=source, attention_mask=source.ne(TigerSerializer.PAD), labels=labels)
@@ -79,7 +85,7 @@ class TigerModel(BaseGRModel):
 
     @torch.no_grad()
     def recommend(self, batch, k, decoder=None):
-        source, trie = self._history_tokens(batch["history"]), self._trie()
+        source, trie = self._history_tokens(batch["history"], batch.get("user")), self._trie()
         beam_width = max(k, self.beam_width)
         beams = [[([TigerSerializer.PAD], 0.0, trie)] for _ in range(source.shape[0])]
         for _ in range(self.item_index.code_length):
