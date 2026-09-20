@@ -17,11 +17,11 @@ p.add_argument("--dataset", default="synthetic"); p.add_argument("--representati
 p.add_argument("--protocol", choices=["paper", "standard"], default="standard", help="paper=fixed-step TIGER recipe; standard=epoch validation and early stopping.")
 p.add_argument("--steps", type=int, default=None, help="Maximum optimizer updates (paper protocol default: 200000).")
 p.add_argument("--epochs", type=int, default=None, help="Maximum epochs (standard protocol default: 400 for Beauty).")
-p.add_argument("--batch-size", type=int, default=256); p.add_argument("--lr", type=float, default=.01); p.add_argument("--warmup-steps", type=int, default=10_000)
+p.add_argument("--batch-size", type=int, default=None, help="Protocol default: paper=256, standard=1024."); p.add_argument("--lr", type=float, default=.01); p.add_argument("--warmup-steps", type=int, default=10_000)
 p.add_argument("--eval-batch-size", type=int, default=32, help="Smaller batch for beam-search validation/test.")
 p.add_argument("--hidden-dim", type=int, default=128); p.add_argument("--heads", type=int, default=6); p.add_argument("--layers", type=int, default=4)
 p.add_argument("--d-ff", type=int, default=1024); p.add_argument("--d-kv", type=int, default=64); p.add_argument("--dropout", type=float, default=.1)
-p.add_argument("--max-history", type=int, default=20); p.add_argument("--beam-width", type=int, default=20); p.add_argument("--device", default=None)
+p.add_argument("--max-history", type=int, default=None, help="Protocol default: paper=20, standard=50."); p.add_argument("--beam-width", type=int, default=20); p.add_argument("--device", default=None)
 p.add_argument("--user-tokens", action=argparse.BooleanOptionalAction, default=True, help="Use TIGER's hashed user-ID token input.")
 p.add_argument("--user-token-count", type=int, default=2000, help="Paper default number of hashed user tokens.")
 p.add_argument("--eval-every-steps", type=int, default=None); p.add_argument("--eval-every-epochs", type=int, default=None)
@@ -46,21 +46,25 @@ if a.protocol == "paper":
     eval_every_steps = a.eval_every_steps if a.eval_every_steps is not None else 5_000
     eval_every_epochs = a.eval_every_epochs
     patience = a.early_stop_patience  # Disabled by default: this is the paper's fixed-step recipe.
+    batch_size = a.batch_size if a.batch_size is not None else 256
+    max_history = a.max_history if a.max_history is not None else 20
 else:
     steps = a.steps
     epochs = a.epochs if a.epochs is not None else (2 if (a.debug or a.dataset == "synthetic") else 400)
     eval_every_steps = a.eval_every_steps
     eval_every_epochs = a.eval_every_epochs if a.eval_every_epochs is not None else 1
     patience = a.early_stop_patience if a.early_stop_patience is not None else 20
-trainer = Trainer(epochs=epochs, steps=steps, batch_size=a.batch_size, lr=a.lr, optimizer="adagrad", warmup_steps=a.warmup_steps,
-    device=device, max_history=a.max_history, log_path=path.with_suffix(".jsonl"), eval_batch_size=a.eval_batch_size, eval_every_steps=eval_every_steps, eval_every_epochs=eval_every_epochs,
+    batch_size = a.batch_size if a.batch_size is not None else 1024
+    max_history = a.max_history if a.max_history is not None else 50
+trainer = Trainer(epochs=epochs, steps=steps, batch_size=batch_size, lr=a.lr, optimizer="adagrad", warmup_steps=a.warmup_steps,
+    device=device, max_history=max_history, log_path=path.with_suffix(".jsonl"), eval_batch_size=a.eval_batch_size, eval_every_steps=eval_every_steps, eval_every_epochs=eval_every_epochs,
     early_stop_patience=patience, early_stop_metric=a.early_stop_metric, min_delta=a.min_delta,
     checkpoint_path=path.with_name(path.stem + "_best.pt"))
-model = TigerModel(dataset.num_items, index, a.hidden_dim, a.heads, a.layers, a.dropout, a.max_history, a.d_ff, a.d_kv, a.beam_width,
+model = TigerModel(dataset.num_items, index, a.hidden_dim, a.heads, a.layers, a.dropout, max_history, a.d_ff, a.d_kv, a.beam_width,
     user_tokens=a.user_tokens, user_token_count=a.user_token_count)
 resource = trainer.fit(model, dataset, dataset.valid_examples); valid = trainer.evaluate(model, dataset.valid_examples); test = trainer.evaluate(model, dataset.test_examples)
 output = {"dataset": dataset.name, "protocol": a.protocol, "device": device, "generator": {"architecture": "T5ForConditionalGeneration",
-    "user_tokens": a.user_tokens, "user_token_count": a.user_token_count if a.user_tokens else 0, "max_history": a.max_history, "steps": steps, "epochs": epochs, "batch_size": a.batch_size, "optimizer": "adagrad",
+    "user_tokens": a.user_tokens, "user_token_count": a.user_token_count if a.user_tokens else 0, "max_history": max_history, "steps": steps, "epochs": epochs, "batch_size": batch_size, "optimizer": "adagrad",
     "lr": a.lr, "warmup_steps": a.warmup_steps, "eval_batch_size": a.eval_batch_size, "beam_width": a.beam_width, "eval_every_steps": eval_every_steps, "eval_every_epochs": eval_every_epochs,
     "early_stop_patience": patience, "early_stop_metric": a.early_stop_metric, "min_delta": a.min_delta}, "valid_metrics": valid, "test_metrics": test,
     "index": index.diagnostics(), "resource": resource}
