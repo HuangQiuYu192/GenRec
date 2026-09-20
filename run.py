@@ -39,7 +39,7 @@ else:
     representation = HashedRepresentationBuilder(seed=a.seed).build(dataset)
     index = RQKMeansBuilder(codebook_size=16, seed=a.seed).build(dataset, representation)
 device = a.device or ("cuda" if torch.cuda.is_available() else "cpu")
-path = (Path("outputs") if a.debug or a.dataset == "synthetic" else root / "outputs") / f"tiger_{dataset.name}_seed{a.seed}.json"
+path = (Path("outputs") if a.debug or a.dataset == "synthetic" else root / "outputs") / f"tiger_{dataset.name}_{a.protocol}_seed{a.seed}.json"
 if a.protocol == "paper":
     steps = a.steps if a.steps is not None else (100 if (a.debug or a.dataset == "synthetic") else 200_000)
     epochs = None
